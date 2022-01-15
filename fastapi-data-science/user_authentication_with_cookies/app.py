@@ -4,16 +4,37 @@ from tortoise import timezone
 from tortoise.exceptions import DoesNotExist, IntegrityError
 from tortoise.contrib.fastapi import register_tortoise
 
-from fastapi import FastAPI, status, HTTPException, Depends
-from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+from fastapi import FastAPI, status, HTTPException, Depends, Response, Form
+from fastapi.security import APIKeyCookie
 
 from authenticate import authenticate, create_access_token
 from models import AccessTokenTortoise, UserBase, UserCreate, UserDb, User, UserTortoise
 from password import get_password_hash
 
+from starlette.middleware.cors import CORSMiddleware
+from starlette_csrf import CSRFMiddleware
+
+TOKEN_COOKIE_NAME = "token"
+CSRF_TOKEN_SECRET = "__CHANGE_THIS_WITH_YOUR_OWN_SECRET_VALUE__"
+
 app = FastAPI()
 
-async def get_current_user(token: str = Depends(OAuth2PasswordBearer(tokenUrl="/token"))) -> UserTortoise:
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:9000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(
+    CSRFMiddleware,
+    secret=CSRF_TOKEN_SECRET,
+    sensitive_cookies={TOKEN_COOKIE_NAME},
+    cookie_domain="localhost",
+)
+
+async def get_current_user(token: str = Depends(APIKeyCookie(name=TOKEN_COOKIE_NAME))) -> UserTortoise:
     try:
         access_token: AccessTokenTortoise = await AccessTokenTortoise.get(
                                                 access_token=token, expiration_date__gte=timezone.
@@ -38,22 +59,31 @@ async def user_register(user: UserCreate) -> User:
 
     return User.from_orm(user_tortoise)
 
-@app.post("/token")
-async def create_token(form_data: OAuth2PasswordRequestForm = Depends(OAuth2PasswordRequestForm)):
-    email = form_data.username
-    password = form_data.password
+@app.post("/login")
+async def login(response: Response, email: str = Form(...), password: str =  Form(...)):
     user = await authenticate(email, password)
 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-        print("HTTP wrror")
-    
+
     token = await create_access_token(user)
 
-    return {"access_token": token.access_token, "token_type": "bearer"}
+    response.set_cookie(TOKEN_COOKIE_NAME,
+                        token.access_token,
+                        max_age=token.max_age(),
+                        secure=True,
+                        httponly=True,
+                        samesite="lax")
 
 @app.get("/anything-protected", response_model=User)
-async def anything_protected(user: UserDb = Depends(get_current_user)):
+async def anything_protected(user: UserTortoise = Depends(get_current_user)):
+    return User.from_orm(user)
+
+@app.post("/me", response_model=User)
+async def user_update(user_update: UserBase, user: UserTortoise = Depends(get_current_user)):
+    user.update_from_dict(user_update.dict(exclude_unset=True))
+    await user.save()
+
     return User.from_orm(user)
 
 TORTOISE_ORM = {
