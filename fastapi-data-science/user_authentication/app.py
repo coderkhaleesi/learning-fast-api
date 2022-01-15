@@ -1,8 +1,11 @@
 
 from tortoise.exceptions import DoesNotExist, IntegrityError
 from fastapi import FastAPI, status, HTTPException, Depends
+from fastapi.security import OAuth2PasswordRequestForm
 
 from tortoise.contrib.fastapi import register_tortoise
+
+from authenticate import authenticate, create_access_token
 
 from models import UserBase, UserCreate, UserDb, User, UserTortoise
 
@@ -25,6 +28,19 @@ async def user_register(user: UserCreate) -> User:
 
     return User.from_orm(user_tortoise)
 
+@app.post("/token")
+async def create_token(form_data: OAuth2PasswordRequestForm = Depends(OAuth2PasswordRequestForm)):
+    email = form_data.username
+    password = form_data.password
+    user = await authenticate(email, password)
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+        print("HTTP wrror")
+    
+    token = await create_access_token(user)
+
+    return {"access_token": token.access_token, "token_type": "bearer"}
 
 TORTOISE_ORM = {
     "connections": {"default": "sqlite://authentication.db"},

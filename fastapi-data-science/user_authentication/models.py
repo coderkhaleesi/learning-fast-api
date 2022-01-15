@@ -38,6 +38,9 @@ class AccessToken(BaseModel):
     access_token: str = Field(default_factory=generate_token)
     expiration_date: datetime = Field(default_factory=get_expiration_date)
 
+    class Config:
+        orm_mode = True
+
 class AccessTokenTortoise(Model):
     access_token = fields.CharField(pk=True, max_length=255)
     user = fields.ForeignKeyField("models.UserTortoise", null=False)
